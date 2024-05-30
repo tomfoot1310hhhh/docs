@@ -1,0 +1,74 @@
+import numpy as np
+from adap_fista_package import adap_fista
+
+
+def adap_aipp(g, grad_g, W, rho, sigma, chi, lambda0, max_iter=1000):
+    j = 1
+    lambd = lambda0
+    M_prev = 1
+
+    for j in range(max_iter):
+        Mj = np.random.uniform(1, M_prev)  # Choose Mj in [1, M_prev]
+        psi_s = lambda x: lambd * g(x) + 0.5 * np.linalg.norm(x - W, 'fro') ** 2
+        grad_psi_s = lambda x: lambd * grad_g(x) + (x - W)
+        prox_psi_n = lambda x, L: np.clip(x, -lambd, lambd)  # Proximal operator example
+
+        W_new, V_new, L_new = adap_fista(W, psi_s, lambda x: 0, grad_psi_s, prox_psi_n, sigma, chi, 0.5, Mj)
+
+        if W_new is None or V_new is None or L_new is None:
+            lambd /= 2
+            continue
+
+        if lambd * g(W) - (lambd * g(W_new) + 0.5 * np.linalg.norm(W_new - W, 'fro') ** 2) >= np.sum(
+                V_new * (W - W_new)):
+            M_prev = L_new
+            Rj = (V_new + W - W_new) / lambd
+
+            if np.linalg.norm(Rj, 'fro') <= rho:
+                return W_new, Rj
+
+            W = W_new
+            j += 1
+        else:
+            lambd /= 2
+
+    return None, None  # If no solution is found within max_iter
+
+
+def hlr_method(Y0, g, grad_g, epsilon, rho, lambda0, sigma, chi, max_iter=1):
+    Y_tilde = Y0
+    s = Y0.shape[1]
+    k = 1
+
+    while k <= max_iter:
+        Y_k, R_k = adap_aipp(g, grad_g, Y_tilde, rho, sigma, chi, lambda0)
+        if Y_k is None or R_k is None:
+            print("ADAP-AIPP failed")
+            break
+
+        G_k = grad_g(Y_k @ Y_k.T)
+
+        eigenvalues, eigenvectors = np.linalg.eigh(G_k)
+        lambda_min = eigenvalues[0]
+        v_min = eigenvectors[:, 0]
+
+        theta_k = max(-lambda_min, 0)
+        y_k = v_min if theta_k > 0 else np.zeros_like(v_min)
+
+        epsilon_k = np.sum(G_k * (Y_k @ Y_k.T)) + theta_k
+        if epsilon_k <= epsilon:
+            return Y_k, theta_k
+
+        alpha_k = np.argmin(
+            [g(alpha * np.outer(y_k, y_k) + (1 - alpha) * (Y_k @ Y_k.T)) for alpha in np.linspace(0, 1, 100)])
+        alpha_k = alpha_k / 100
+
+        if alpha_k == 1:
+            Y_tilde = np.outer(y_k, np.ones(s))
+        else:
+            Y_tilde = np.sqrt(1 - alpha_k) * Y_k + np.sqrt(alpha_k) * y_k[:, np.newaxis]
+            s += 1
+
+        k += 1
+
+    return None, None  # If no solution is found within max_iter
